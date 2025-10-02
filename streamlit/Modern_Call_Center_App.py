@@ -25,7 +25,7 @@ API_TIMEOUT = 50000  # in milliseconds
 
 # Get current database and schema dynamically
 current_db = session.get_current_database()
-current_schema = "analytics"
+current_schema = session.get_current_schema()
 
 CORTEX_SEARCH_SERVICE = f"{current_db}.{current_schema}.call_center_search"
 SEMANTIC_MODEL = f"@{current_db}.{current_schema}.cortex_models/semantic_models/call_center_semantic_model.yaml"
@@ -42,7 +42,7 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 2rem;
     }
-    
+
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 1rem;
@@ -51,17 +51,17 @@ st.markdown("""
         text-align: center;
         margin: 0.5rem 0;
     }
-    
+
     .metric-value {
         font-size: 2rem;
         font-weight: bold;
     }
-    
+
     .metric-label {
         font-size: 1rem;
         opacity: 0.9;
     }
-    
+
     .insight-box {
         background: var(--background-color, rgba(102, 126, 234, 0.1));
         border-left: 4px solid #667eea;
@@ -70,7 +70,7 @@ st.markdown("""
         margin: 1rem 0;
         border: 1px solid var(--border-color, rgba(102, 126, 234, 0.2));
     }
-    
+
     /* Dark mode support */
     @media (prefers-color-scheme: dark) {
         .insight-box {
@@ -78,14 +78,14 @@ st.markdown("""
             border: 1px solid rgba(102, 126, 234, 0.3);
         }
     }
-    
+
     /* Streamlit dark mode class support */
     .stApp[data-theme="dark"] .insight-box,
     [data-testid="stAppViewContainer"][data-theme="dark"] .insight-box {
         background: rgba(102, 126, 234, 0.15);
         border: 1px solid rgba(102, 126, 234, 0.3);
     }
-    
+
     .stTab {
         font-size: 1.2rem;
     }
@@ -93,12 +93,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Helper Functions
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=1800)  # Cache for 30 minutes
 def load_kpis():
     """Load overall KPIs from the view created in setup"""
     try:
         # First try the existing view
-        df = session.sql("SELECT * FROM call_center_analytics_db.analytics.call_center_kpis").to_pandas()
+        df = session.sql(f"SELECT * FROM {current_db}.{current_schema}.call_center_kpis").to_pandas()
         if len(df) > 0:
             return df.iloc[0]
         else:
@@ -108,8 +108,8 @@ def load_kpis():
         # If view doesn't exist, try to calculate KPIs directly from comprehensive_call_analysis
         # st.info("Loading performance metrics...")
         try:
-            query = """
-            SELECT 
+            query = f"""
+            SELECT
                 COUNT(*) as TOTAL_CALLS,
                 COUNT(DISTINCT agent_name) as UNIQUE_AGENTS,
                 ROUND(AVG(sentiment_score), 3) as AVG_SENTIMENT_SCORE,
@@ -120,8 +120,8 @@ def load_kpis():
                 ROUND(SUM(CASE WHEN sentiment_score > 0.1 THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as POSITIVE_SENTIMENT_PCT,
                 MODE(primary_intent) as TOP_CALL_INTENT,
                 ROUND(AVG(word_count), 0) as AVG_CALL_LENGTH_WORDS
-            FROM call_center_analytics_db.analytics.comprehensive_call_analysis
-            WHERE agent_name IS NOT NULL 
+            FROM {current_db}.{current_schema}.comprehensive_call_analysis
+            WHERE agent_name IS NOT NULL
             AND agent_name != 'Not Available'
             """
             result = session.sql(query).to_pandas()
@@ -148,35 +148,35 @@ def create_default_kpis():
         'AVG_CALL_LENGTH_WORDS': 0
     })
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load_agent_performance():
     """Load agent performance data"""
     try:
-        return session.sql("SELECT * FROM call_center_analytics_db.analytics.agent_performance_summary").to_pandas()
+        return session.sql(f"SELECT * FROM {current_db}.{current_schema}.agent_performance_summary").to_pandas()
     except Exception as e:
         # If view doesn't exist, try to calculate agent performance directly
         # Loading agent performance data...
         try:
-            query = """
-            SELECT 
+            query = f"""
+            SELECT
                 agent_name as AGENT_NAME,
                 COUNT(*) as TOTAL_CALLS,
                 ROUND(AVG(sentiment_score), 3) as AVG_SENTIMENT,
                 ROUND(AVG(agent_performance_score), 1) as AVG_PERFORMANCE_SCORE,
-                
+
                 -- Resolution effectiveness
                 SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) as RESOLVED_CALLS,
                 ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as RESOLUTION_RATE,
-                
+
                 -- Customer satisfaction
                 SUM(CASE WHEN customer_satisfaction = 'satisfied' THEN 1 ELSE 0 END) as SATISFIED_CUSTOMERS,
                 ROUND(SUM(CASE WHEN customer_satisfaction = 'satisfied' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as SATISFACTION_RATE,
-                
+
                 -- Escalation patterns
                 SUM(CASE WHEN escalation_required = 'yes' THEN 1 ELSE 0 END) as ESCALATIONS,
                 ROUND(SUM(CASE WHEN escalation_required = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as ESCALATION_RATE
-                
-            FROM call_center_analytics_db.analytics.comprehensive_call_analysis
+
+            FROM {current_db}.{current_schema}.comprehensive_call_analysis
             WHERE agent_name != 'Not Available' AND agent_name IS NOT NULL
             GROUP BY agent_name
             ORDER BY AVG_PERFORMANCE_SCORE DESC
@@ -186,18 +186,18 @@ def load_agent_performance():
             # Unable to calculate agent performance
             return pd.DataFrame()  # Return empty DataFrame
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load_call_patterns():
     """Load call pattern analysis"""
     try:
-        query = """
-        SELECT 
+        query = f"""
+        SELECT
             primary_intent as PRIMARY_INTENT,
             COUNT(*) as CALL_COUNT,
             ROUND(AVG(sentiment_score), 3) as AVG_SENTIMENT,
             ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as RESOLUTION_RATE,
             ROUND(SUM(CASE WHEN customer_satisfaction = 'satisfied' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as SATISFACTION_RATE
-        FROM call_center_analytics_db.analytics.comprehensive_call_analysis
+        FROM {current_db}.{current_schema}.comprehensive_call_analysis
         WHERE primary_intent IS NOT NULL AND primary_intent != 'Not Available'
         GROUP BY primary_intent
         ORDER BY CALL_COUNT DESC
@@ -207,16 +207,16 @@ def load_call_patterns():
         # Unable to load call patterns
         return pd.DataFrame()  # Return empty DataFrame
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load_sentiment_trends():
     """Load sentiment trends over time"""
     try:
-        query = """
-        SELECT 
+        query = f"""
+        SELECT
             sentiment_category as SENTIMENT_CATEGORY,
             COUNT(*) as COUNT,
             ROUND(AVG(agent_performance_score), 1) as AVG_PERFORMANCE
-        FROM call_center_analytics_db.analytics.comprehensive_call_analysis
+        FROM {current_db}.{current_schema}.comprehensive_call_analysis
         WHERE sentiment_category IS NOT NULL
         GROUP BY sentiment_category
         """
@@ -225,17 +225,131 @@ def load_sentiment_trends():
         # Unable to load sentiment trends
         return pd.DataFrame()  # Return empty DataFrame
 
+@st.cache_data(ttl=1800)
+def load_pattern_analysis():
+    """Load pattern analysis data for heatmap and scatter plot"""
+    try:
+        # Query for heatmap - grouped by intent and urgency
+        heatmap_query = f"""
+        SELECT
+            primary_intent as PRIMARY_INTENT,
+            urgency_level as URGENCY_LEVEL,
+            COUNT(*) as CALL_COUNT,
+            ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as RESOLUTION_RATE
+        FROM {current_db}.{current_schema}.comprehensive_call_analysis
+        WHERE primary_intent IS NOT NULL AND primary_intent != 'Not Available'
+        AND urgency_level IS NOT NULL AND urgency_level != 'Not Available'
+        GROUP BY primary_intent, urgency_level
+        ORDER BY CALL_COUNT DESC
+        """
+
+        # Query for scatter plot - grouped by intent only
+        scatter_query = f"""
+        SELECT
+            primary_intent as PRIMARY_INTENT,
+            COUNT(*) as CALL_COUNT,
+            ROUND(AVG(sentiment_score), 3) as AVG_SENTIMENT,
+            ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as RESOLUTION_RATE,
+            ROUND(SUM(CASE WHEN escalation_required = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as ESCALATION_RATE
+        FROM {current_db}.{current_schema}.comprehensive_call_analysis
+        WHERE primary_intent IS NOT NULL AND primary_intent != 'Not Available'
+        GROUP BY primary_intent
+        ORDER BY CALL_COUNT DESC
+        """
+
+        heatmap_df = session.sql(heatmap_query).to_pandas()
+        scatter_df = session.sql(scatter_query).to_pandas()
+
+        return heatmap_df, scatter_df
+    except Exception as e:
+        return pd.DataFrame(), pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def load_anomaly_detection():
+    """Load anomaly detection data"""
+    try:
+        anomaly_query = f"""
+        WITH call_stats AS (
+            SELECT
+                call_id,
+                agent_name,
+                sentiment_score,
+                agent_performance_score,
+                word_count,
+                customer_satisfaction,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY sentiment_score) OVER () as sentiment_q1,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY sentiment_score) OVER () as sentiment_q3,
+                AVG(sentiment_score) OVER () as avg_sentiment,
+                STDDEV(sentiment_score) OVER () as stddev_sentiment
+            FROM {current_db}.{current_schema}.comprehensive_call_analysis
+            WHERE sentiment_score IS NOT NULL
+        )
+        SELECT
+            call_id as CALL_ID,
+            agent_name as AGENT_NAME,
+            sentiment_score as SENTIMENT_SCORE,
+            agent_performance_score as AGENT_PERFORMANCE_SCORE,
+            word_count as WORD_COUNT,
+            customer_satisfaction as CUSTOMER_SATISFACTION,
+            CASE
+                WHEN sentiment_score < (sentiment_q1 - 1.5 * (sentiment_q3 - sentiment_q1)) THEN 'Extremely Low Sentiment'
+                WHEN sentiment_score > (sentiment_q3 + 1.5 * (sentiment_q3 - sentiment_q1)) THEN 'Extremely High Sentiment'
+                WHEN ABS(sentiment_score - avg_sentiment) > 2 * stddev_sentiment THEN 'Sentiment Outlier'
+                ELSE 'Normal'
+            END as ANOMALY_TYPE
+        FROM call_stats
+        WHERE ANOMALY_TYPE != 'Normal'
+        ORDER BY ABS(sentiment_score - avg_sentiment) DESC
+        LIMIT 20
+        """
+
+        return session.sql(anomaly_query).to_pandas()
+    except Exception as e:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def load_recommendations():
+    """Load AI-generated recommendations"""
+    try:
+        recommendations_query = f"""
+        WITH summary_metrics AS (
+            SELECT
+                COUNT(*) as total_calls,
+                ROUND(AVG(sentiment_score), 3) as avg_sentiment,
+                ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as resolution_rate,
+                ROUND(SUM(CASE WHEN customer_satisfaction = 'satisfied' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as satisfaction_rate,
+                MODE(primary_intent) as TOP_INTENT
+            FROM {current_db}.{current_schema}.comprehensive_call_analysis
+            WHERE agent_name != 'Not Available'
+        )
+        SELECT
+            SNOWFLAKE.CORTEX.COMPLETE(
+                'mixtral-8x7b',
+                'Based on these call center metrics, provide 5 actionable recommendations in bullet points:
+                - Total Calls: ' || total_calls || '
+                - Average Sentiment: ' || avg_sentiment || '
+                - Resolution Rate: ' || resolution_rate || '%
+                - Satisfaction Rate: ' || satisfaction_rate || '%
+                - Top Intent: ' || TOP_INTENT
+            ) as recommendations
+        FROM summary_metrics
+        """
+
+        return session.sql(recommendations_query).to_pandas()
+    except Exception as e:
+        return pd.DataFrame()
+
 def run_snowflake_query(query):
     """Execute a Snowflake query and return results"""
     try:
         # Clean up the query
         clean_query = query.replace(';','').strip()
-        
+
         # Execute query
         result = session.sql(clean_query)
-        
+
         return result
-        
+
     except Exception as e:
         st.error(f"❌ **SQL Error:** {str(e)}")
         return None
@@ -258,15 +372,15 @@ def safe_get_column(row, column_name, default='N/A'):
 
 def cortex_agent_call(query: str, conversation_history: list = None, limit: int = 10):
     """Make API call to Cortex Agent following official specification with conversation context"""
-    
+
     # Build messages array with conversation history
     messages = []
-    
+
     # Add conversation history if provided
     if conversation_history:
         # Limit to last 10 messages to avoid token limits while maintaining context
         recent_history = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
-        
+
         for msg in recent_history:
             if msg['role'] == 'user':
                 messages.append({
@@ -299,7 +413,7 @@ def cortex_agent_call(query: str, conversation_history: list = None, limit: int 
                 }
             ]
         })
-    
+
     payload = {
         "model": "claude-3-5-sonnet",  # Confirmed supported model
         "messages": messages,
@@ -329,7 +443,7 @@ def cortex_agent_call(query: str, conversation_history: list = None, limit: int 
             }
         }
     }
-    
+
     try:
         resp = _snowflake.send_snow_api_request(
             "POST",
@@ -340,11 +454,11 @@ def cortex_agent_call(query: str, conversation_history: list = None, limit: int 
             None,
             API_TIMEOUT,
         )
-        
+
         if resp["status"] != 200:
             st.error(f"❌ Cortex Agent HTTP Error: {resp['status']} - {resp.get('reason', 'Unknown')}")
             return None
-        
+
         try:
             response_content = json.loads(resp["content"])
             st.success("✅ Cortex Agent responded successfully!")
@@ -353,7 +467,7 @@ def cortex_agent_call(query: str, conversation_history: list = None, limit: int 
             st.error(f"❌ Failed to parse Cortex Agent response: {str(e)}")
             st.text(f"Raw response: {resp['content'][:500]}...")
             return None
-            
+
     except Exception as e:
         st.error(f"❌ Cortex Agent request failed: {str(e)}")
         return None
@@ -364,15 +478,15 @@ def process_agent_response(response, query=""):
     sql = ""
     citations = []
     agent_steps = []
-    
+
     # Check if this is a search query vs analytical query
     is_search_query = any(word in query.lower() for word in ['show me calls', 'find calls', 'search for calls', 'find transcripts', 'show transcripts'])
-    
+
     if not response:
         return text, sql, citations
     if isinstance(response, str):
         return text, sql, citations
-    
+
     try:
         # Handle streaming list response format
         if isinstance(response, list):
@@ -382,7 +496,7 @@ def process_agent_response(response, query=""):
                     if event.get('event') == "error":
                         error_data = event.get('data', {})
                         error_message = error_data.get('message', 'Unknown error')
-                        
+
                         if 'semantic model YAML' in error_message:
                             st.error("🔧 **Semantic Model Error**: Your semantic model YAML file has syntax errors.")
                             st.error(f"**Details**: {error_message}")
@@ -395,16 +509,16 @@ def process_agent_response(response, query=""):
                         else:
                             st.error(f"Cortex Agent Error: {error_message}")
                         return "", "", []
-                    
+
                     # Handle successful message deltas and content
                     elif event.get('event') == "message.delta":
                         data = event.get('data', {})
                         delta = data.get('delta', {})
-                        
+
                         # Extract content from delta
                         for content_item in delta.get('content', []):
                             content_type = content_item.get('type')
-                            
+
                             # Handle tool results (official format)
                             if content_type == "tool_results":
                                 tool_results = content_item.get('tool_results', {})
@@ -417,23 +531,23 @@ def process_agent_response(response, query=""):
                                                 sql = json_data.get('sql', '')
                                                 if not is_search_query:
                                                     st.success("✅ **Agent Step**: Generated SQL query for data analysis")
-                                            
+
                                             # Handle search results
                                             search_results = json_data.get('searchResults', [])
                                             if search_results:
                                                 st.success(f"✅ **Agent Step**: Found {len(search_results)} relevant transcript(s) - providing citations")
                                             for search_result in search_results:
                                                 citations.append({
-                                                    'source_id': search_result.get('source_id', ''), 
+                                                    'source_id': search_result.get('source_id', ''),
                                                     'doc_id': search_result.get('doc_id', ''),
                                                     'title': search_result.get('title', '')
                                                 })
-                            
+
                             # Handle tool use (when agent is calling tools)
                             elif content_type == "tool_use":
                                 tool_use = content_item.get('tool_use', {})
                                 tool_name = tool_use.get('name', '')
-                                
+
                                 # Show what the agent is doing
                                 if tool_name == 'cortex_analyst_text_to_sql':
                                     st.info("🔧 **Agent Step**: Using Cortex Analyst to generate SQL query for structured data analysis")
@@ -445,18 +559,18 @@ def process_agent_response(response, query=""):
                                     st.info("🔍 **Agent Step**: Using Cortex Search to find relevant transcripts and unstructured data")
                                 elif tool_name == 'data_model':
                                     st.info("📊 **Agent Step**: Accessing semantic data model to understand available metrics")
-                            
+
                             # Handle direct text content
                             elif content_type == 'text':
                                 text += content_item.get('text', '')
-                    
+
                     # Handle complete messages (alternative format)
                     elif 'role' in event and event['role'] == 'assistant':
                         content_list = event.get('content', [])
                         for content_item in content_list:
                             if content_item.get('type') == 'text':
                                 text += content_item.get('text', '')
-        
+
         # Handle direct dict response format (non-streaming)
         elif isinstance(response, dict):
             if 'choices' in response:
@@ -465,11 +579,11 @@ def process_agent_response(response, query=""):
                         text += choice['message']['content']
             elif 'content' in response:
                 text += str(response['content'])
-        
+
     except Exception as e:
         st.error(f"Error processing response: {str(e)}")
         return "", "", []
-        
+
     return text, sql, citations
 
 
@@ -478,14 +592,14 @@ def process_agent_response(response, query=""):
 def main():
     # Header
     st.markdown('<h1 class="main-header">🎧 AI-Powered Call Center Analytics</h1>', unsafe_allow_html=True)
-    
+
     # Subtitle
     st.markdown("""
     <div style="text-align: center; margin-bottom: 2rem; font-size: 1.2rem; color: #666;">
         Powered by Snowflake AI_TRANSCRIBE, Cortex Agents, and Advanced Analytics
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Sidebar
     with st.sidebar:
         st.header("🚀 Navigation")
@@ -493,10 +607,15 @@ def main():
             "Choose a section:",
             ["📊 Executive Dashboard", "🤖 AI Assistant", "📈 Deep Analytics", "🎵 Audio Explorer"]
         )
-        
+
+        if st.button("🔄 Reset Cache", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Cache cleared!")
+            st.rerun()
+
         st.markdown("---")
         st.markdown("### 🔧 Quick Stats")
-        
+
         # Load and display quick stats
         kpis = load_kpis()
         if kpis is not None:
@@ -507,7 +626,7 @@ def main():
             st.metric("Total Calls", "0")
             st.metric("Avg Sentiment", "0.000")
             st.metric("Resolution Rate", "0.0%")
-        
+
         st.markdown("---")
         st.markdown("### ℹ️ About")
         st.markdown("""
@@ -530,23 +649,23 @@ def main():
 
 def show_executive_dashboard():
     st.header("📊 Executive Dashboard")
-    
+
     # Load data
     kpis = load_kpis()
     agent_perf = load_agent_performance()
     call_patterns = load_call_patterns()
     sentiment_data = load_sentiment_trends()
-    
+
     if kpis is None or kpis['TOTAL_CALLS'] == 0:
         st.info("📊 **No call data available** - Please load your call center data to begin analysis.")
         if kpis is None:
             return
-    
+
     # KPI Cards
     st.subheader("🎯 Key Performance Indicators")
-    
+
     col1, col2, col3, col4 = st.columns(4)
-    
+
     with col1:
         st.markdown(f"""
         <div class="metric-card">
@@ -554,7 +673,7 @@ def show_executive_dashboard():
             <div class="metric-label">Total Calls Analyzed</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col2:
         st.markdown(f"""
         <div class="metric-card">
@@ -562,7 +681,7 @@ def show_executive_dashboard():
             <div class="metric-label">Resolution Rate</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col3:
         st.markdown(f"""
         <div class="metric-card">
@@ -570,7 +689,7 @@ def show_executive_dashboard():
             <div class="metric-label">Customer Satisfaction</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col4:
         st.markdown(f"""
         <div class="metric-card">
@@ -578,16 +697,16 @@ def show_executive_dashboard():
             <div class="metric-label">Avg Agent Score</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     # Charts Row 1
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.subheader("📞 Call Intent Distribution")
         if not call_patterns.empty:
             fig = px.pie(
-                call_patterns, 
-                values='CALL_COUNT', 
+                call_patterns,
+                values='CALL_COUNT',
                 names='PRIMARY_INTENT',
                 title="Calls by Intent Type"
             )
@@ -595,7 +714,7 @@ def show_executive_dashboard():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No call pattern data available.")
-    
+
     with col2:
         st.subheader("😊 Sentiment Analysis")
         if not sentiment_data.empty:
@@ -607,7 +726,7 @@ def show_executive_dashboard():
                 title="Call Sentiment Distribution",
                 color_discrete_map={
                     'POSITIVE': '#2E8B57',
-                    'NEUTRAL': '#FFD700', 
+                    'NEUTRAL': '#FFD700',
                     'NEGATIVE': '#DC143C'
                 }
             )
@@ -615,13 +734,13 @@ def show_executive_dashboard():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No sentiment data available.")
-    
+
     # Agent Performance Section
     st.subheader("👥 Agent Performance Overview")
     if not agent_perf.empty:
         # Top performers
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.write("**🏆 Top Performing Agents**")
             top_agents = agent_perf.head(5)[['AGENT_NAME', 'AVG_PERFORMANCE_SCORE', 'RESOLUTION_RATE']]
@@ -632,7 +751,7 @@ def show_executive_dashboard():
                 }),
                 use_container_width=True
             )
-        
+
         with col2:
             st.write("**📊 Performance vs Resolution Rate**")
             fig = px.scatter(
@@ -647,7 +766,7 @@ def show_executive_dashboard():
             st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No agent performance data available.")
-    
+
     # Insights Box
     st.markdown(f"""
     <div class="insight-box">
@@ -663,7 +782,7 @@ def show_executive_dashboard():
 
 def show_ai_assistant():
     st.header("🤖 AI Assistant - Powered by Cortex Agents")
-    
+
     # Examples section
     with st.expander("💡 Example Questions", expanded=False):
         st.markdown("""
@@ -671,58 +790,58 @@ def show_ai_assistant():
         - "Show me calls where customers mentioned billing disputes"
         - "Find transcripts where agents offered refunds"
         - "Search for calls about technical support issues"
-        
+
         **📊 Analyze call center performance:**
         - "What's the average resolution rate by agent?"
         - "Which call intents have the lowest satisfaction scores?"
         - "Give me the breakdown of calls by topic"
-        
+
         **🚀 Complex questions:**
         - "Find billing complaint calls and show resolution rates for those agents"
         - "What are customers saying about our product and how does that correlate with satisfaction?"
         """)
-    
+
     # New chat button
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         if st.button("🔄 New Conversation", key="new_chat"):
             st.session_state.messages = []
             st.rerun()
-    
+
     # Initialize chat
     if 'messages' not in st.session_state:
         st.session_state.messages = []
-    
+
     # Display chat history
     for message in st.session_state.messages:
         with st.chat_message(message['role']):
             st.markdown(message['content'])
-    
+
     # Chat input
     if query := st.chat_input("Ask me anything about your call center data..."):
         # Add user message
         with st.chat_message("user"):
             st.markdown(query)
         st.session_state.messages.append({"role": "user", "content": query})
-        
+
         # Get AI response
         with st.chat_message("assistant"):
             with st.spinner("🧠 Analyzing your request..."):
                 response = cortex_agent_call(query, st.session_state.messages, 5)
                 text, sql, citations = process_agent_response(response, query)
-                
+
                 if text:
                     # Clean up response formatting
                     text = text.replace("【†", "[").replace("†】", "]")
                     st.markdown(text)
-                    
+
                     # Store response and SQL in session state
                     st.session_state.messages.append({"role": "assistant", "content": text})
                     if sql:
                         # Store SQL with message index for persistence
                         message_idx = len(st.session_state.messages) - 1
                         st.session_state[f"sql_{message_idx}"] = sql
-                    
+
                     # Show citations if available
                     if citations:
                         with st.expander("📄 Source Citations"):
@@ -730,19 +849,19 @@ def show_ai_assistant():
                                 doc_id = citation.get("doc_id", "")
                                 source_id = citation.get("source_id", "")
                                 title = citation.get("title", "")
-                                
+
                                 if doc_id:
                                     # Try multiple approaches to find the transcript
                                     # First, try exact match in comprehensive_call_analysis
                                     query_text = f"""
-                                    SELECT call_id, agent_name, customer_name, primary_intent, 
+                                    SELECT call_id, agent_name, customer_name, primary_intent,
                                            LEFT(transcript_text, 400) || '...' as preview
-                                    FROM call_center_analytics_db.analytics.comprehensive_call_analysis 
+                                    FROM {current_db}.{current_schema}.comprehensive_call_analysis
                                     WHERE call_id = '{doc_id}'
                                     """
-                                    
+
                                     result = run_snowflake_query(query_text)
-                                    
+
                                     if result:
                                         try:
                                             result_df = result.to_pandas()
@@ -753,7 +872,7 @@ def show_ai_assistant():
                                                 customer_name = safe_get_column(row, 'customer_name', 'N/A')
                                                 primary_intent = safe_get_column(row, 'primary_intent', 'N/A')
                                                 preview = safe_get_column(row, 'preview', 'No preview available')
-                                                
+
                                                 st.write(f"**Call ID:** {call_id}")
                                                 st.write(f"**Agent:** {agent_name} | **Customer:** {customer_name}")
                                                 st.write(f"**Intent:** {primary_intent}")
@@ -762,18 +881,18 @@ def show_ai_assistant():
                                                 continue
                                         except Exception as e:
                                             pass  # Continue to next query
-                                    
+
                                     # If no exact match, try pattern matching in comprehensive_call_analysis
                                     query_text = f"""
-                                    SELECT call_id, agent_name, customer_name, primary_intent, 
+                                    SELECT call_id, agent_name, customer_name, primary_intent,
                                            LEFT(transcript_text, 400) || '...' as preview
-                                    FROM call_center_analytics_db.analytics.comprehensive_call_analysis 
+                                    FROM {current_db}.{current_schema}.comprehensive_call_analysis
                                     WHERE call_id LIKE '%{doc_id.replace('.mp3', '').replace('.wav', '')}%'
                                     LIMIT 1
                                     """
-                                    
+
                                     result = run_snowflake_query(query_text)
-                                    
+
                                     if result:
                                         try:
                                             result_df = result.to_pandas()
@@ -784,7 +903,7 @@ def show_ai_assistant():
                                                 customer_name = safe_get_column(row, 'customer_name', 'N/A')
                                                 primary_intent = safe_get_column(row, 'primary_intent', 'N/A')
                                                 preview = safe_get_column(row, 'preview', 'No preview available')
-                                                
+
                                                 st.write(f"**Call ID:** {call_id}")
                                                 st.write(f"**Agent:** {agent_name} | **Customer:** {customer_name}")
                                                 st.write(f"**Intent:** {primary_intent}")
@@ -793,21 +912,21 @@ def show_ai_assistant():
                                                 continue
                                         except Exception as e:
                                             pass  # Continue to next query
-                                    
+
                                     # If still no match, try the ai_transcribed_calls table as fallback
                                     query_text = f"""
-                                    SELECT call_id, 
-                                           'N/A' as agent_name, 
-                                           'N/A' as customer_name, 
+                                    SELECT call_id,
+                                           'N/A' as agent_name,
+                                           'N/A' as customer_name,
                                            'Sample Audio' as primary_intent,
                                            LEFT(transcript_text, 400) || '...' as preview
-                                    FROM call_center_analytics_db.analytics.ai_transcribed_calls 
+                                    FROM {current_db}.{current_schema}.ai_transcribed_calls
                                     WHERE call_id = '{doc_id}'
                                     AND transcript_text IS NOT NULL
                                     """
-                                    
+
                                     result = run_snowflake_query(query_text)
-                                    
+
                                     if result:
                                         try:
                                             result_df = result.to_pandas()
@@ -818,7 +937,7 @@ def show_ai_assistant():
                                                 customer_name = safe_get_column(row, 'customer_name', 'N/A')
                                                 primary_intent = safe_get_column(row, 'primary_intent', 'N/A')
                                                 preview = safe_get_column(row, 'preview', 'No preview available')
-                                                
+
                                                 st.write(f"**Call ID:** {call_id}")
                                                 st.write(f"**Agent:** {agent_name} | **Customer:** {customer_name}")
                                                 st.write(f"**Intent:** {primary_intent}")
@@ -827,22 +946,22 @@ def show_ai_assistant():
                                                 continue
                                         except Exception as e:
                                             pass  # Continue to next query
-                                        
+
                                     # If still no exact match, try pattern matching in ai_transcribed_calls
                                     query_text = f"""
-                                    SELECT call_id, 
-                                           'N/A' as agent_name, 
-                                           'N/A' as customer_name, 
+                                    SELECT call_id,
+                                           'N/A' as agent_name,
+                                           'N/A' as customer_name,
                                            'Sample Audio' as primary_intent,
                                            LEFT(transcript_text, 400) || '...' as preview
-                                    FROM call_center_analytics_db.analytics.ai_transcribed_calls 
+                                    FROM {current_db}.{current_schema}.ai_transcribed_calls
                                     WHERE call_id LIKE '%{doc_id.replace('.mp3', '').replace('.wav', '')}%'
                                     AND transcript_text IS NOT NULL
                                     LIMIT 1
                                     """
-                                    
+
                                     result = run_snowflake_query(query_text)
-                                    
+
                                     if result:
                                         try:
                                             result_df = result.to_pandas()
@@ -853,7 +972,7 @@ def show_ai_assistant():
                                                 customer_name = safe_get_column(row, 'customer_name', 'N/A')
                                                 primary_intent = safe_get_column(row, 'primary_intent', 'N/A')
                                                 preview = safe_get_column(row, 'preview', 'No preview available')
-                                                
+
                                                 st.write(f"**Call ID:** {call_id}")
                                                 st.write(f"**Agent:** {agent_name} | **Customer:** {customer_name}")
                                                 st.write(f"**Intent:** {primary_intent}")
@@ -862,7 +981,7 @@ def show_ai_assistant():
                                                 continue
                                         except Exception as e:
                                             pass  # Continue to next query
-                                    
+
                                     # If we get here, no queries found data
                                     st.write(f"**Source File:** {doc_id}")
                                     if title:
@@ -877,39 +996,39 @@ def show_ai_assistant():
                                     if title:
                                         st.write(f"**Title:** {title}")
                                     st.markdown("---")
-                    
+
                     # Show generated SQL if available (only for analytical queries, not search)
                     is_search_query = any(word in query.lower() for word in ['show me calls', 'find calls', 'search for calls', 'find transcripts', 'show transcripts'])
-                    
+
                     if sql and not is_search_query:  # Only show SQL for analytical queries
                         message_idx = len(st.session_state.messages) - 1
                         st.session_state[f"sql_{message_idx}"] = sql
-                
+
                 else:
                     st.error("❌ **Unable to process your request.** Please try rephrasing your question or try again in a moment.")
-    
+
     # Display SQL queries for all messages that have them
     for i, message in enumerate(st.session_state.messages):
         if message['role'] == 'assistant' and f"sql_{i}" in st.session_state:
             stored_sql = st.session_state[f"sql_{i}"]
             with st.expander("🔍 Generated SQL Query", expanded=True):
                 st.code(stored_sql, language="sql")
-                
+
                 # Execute and show results with better error handling
                 # Create a unique key that doesn't change
                 query_hash = hash(stored_sql) % 10000
                 col1, col2 = st.columns([1, 4])
                 with col1:
                     execute_button = st.button("▶️ Execute Query", key=f"exec_sql_{query_hash}_{i}")
-                
+
                 # Always show some feedback
                 if execute_button:
                     # Use session state to track execution
                     if f"executed_{query_hash}_{i}" not in st.session_state:
                         st.session_state[f"executed_{query_hash}_{i}"] = False
-                    
+
                     st.session_state[f"executed_{query_hash}_{i}"] = True
-                    
+
                 if st.session_state.get(f"executed_{query_hash}_{i}", False):
                     with st.spinner("🔄 Executing SQL query..."):
                         result = run_snowflake_query(stored_sql)
@@ -927,108 +1046,62 @@ def show_ai_assistant():
 
 def show_deep_analytics():
     st.header("📈 Deep Analytics")
-    
+
     tab1, tab2, tab3 = st.tabs(["🔍 Pattern Analysis", "🚨 Anomaly Detection", "🎯 Recommendations"])
-    
+
     with tab1:
         st.subheader("Call Pattern Deep Dive")
-        
-        # Resolution rate by intent
-        patterns_query = """
-        WITH pattern_analysis AS (
-            SELECT 
-                primary_intent as PRIMARY_INTENT,
-                urgency_level as URGENCY_LEVEL,
-                COUNT(*) as CALL_COUNT,
-                ROUND(AVG(sentiment_score), 3) as AVG_SENTIMENT,
-                ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as RESOLUTION_RATE,
-                ROUND(SUM(CASE WHEN escalation_required = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as ESCALATION_RATE
-            FROM call_center_analytics_db.analytics.comprehensive_call_analysis
-            WHERE primary_intent IS NOT NULL AND primary_intent != 'Not Available'
-            AND urgency_level IS NOT NULL AND urgency_level != 'Not Available'
-            GROUP BY primary_intent, urgency_level
-        )
-        SELECT * FROM pattern_analysis ORDER BY CALL_COUNT DESC
-        """
-        
-        patterns_df = session.sql(patterns_query).to_pandas()
-        
-        if not patterns_df.empty:
+
+        # Load cached pattern analysis data
+        heatmap_df, scatter_df = load_pattern_analysis()
+
+        if not heatmap_df.empty or not scatter_df.empty:
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 # Heatmap of resolution rates
-                pivot_data = patterns_df.pivot_table(
-                    values='RESOLUTION_RATE', 
-                    index='PRIMARY_INTENT', 
-                    columns='URGENCY_LEVEL', 
-                    fill_value=0
-                )
-                
-                fig = px.imshow(
-                    pivot_data.values,
-                    x=pivot_data.columns,
-                    y=pivot_data.index,
-                    color_continuous_scale='RdYlGn',
-                    title="Resolution Rate by Intent & Urgency"
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            
+                if not heatmap_df.empty:
+                    pivot_data = heatmap_df.pivot_table(
+                        values='RESOLUTION_RATE',
+                        index='PRIMARY_INTENT',
+                        columns='URGENCY_LEVEL',
+                        fill_value=0
+                    )
+
+                    fig = px.imshow(
+                        pivot_data.values,
+                        x=pivot_data.columns,
+                        y=pivot_data.index,
+                        color_continuous_scale='RdYlGn',
+                        title="Resolution Rate by Intent & Urgency"
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No data available for heatmap.")
+
             with col2:
-                # Escalation patterns
-                fig = px.scatter(
-                    patterns_df,
-                    x='RESOLUTION_RATE',
-                    y='ESCALATION_RATE',
-                    size='CALL_COUNT',
-                    color='PRIMARY_INTENT',
-                    title="Resolution vs Escalation Patterns"
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-    
+                # Escalation patterns - using aggregated data
+                if not scatter_df.empty:
+                    fig = px.scatter(
+                        scatter_df,
+                        x='RESOLUTION_RATE',
+                        y='ESCALATION_RATE',
+                        size='CALL_COUNT',
+                        color='PRIMARY_INTENT',
+                        title="Resolution vs Escalation Patterns"
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No data available for scatter plot.")
+
     with tab2:
         st.subheader("Anomaly Detection")
-        
-        # Statistical anomaly detection
-        anomaly_query = """
-        WITH call_stats AS (
-            SELECT 
-                call_id,
-                agent_name,
-                sentiment_score,
-                agent_performance_score,
-                word_count,
-                customer_satisfaction,
-                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY sentiment_score) OVER () as sentiment_q1,
-                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY sentiment_score) OVER () as sentiment_q3,
-                AVG(sentiment_score) OVER () as avg_sentiment,
-                STDDEV(sentiment_score) OVER () as stddev_sentiment
-            FROM call_center_analytics_db.analytics.comprehensive_call_analysis
-            WHERE sentiment_score IS NOT NULL
-        )
-        SELECT 
-            call_id as CALL_ID,
-            agent_name as AGENT_NAME,
-            sentiment_score as SENTIMENT_SCORE,
-            agent_performance_score as AGENT_PERFORMANCE_SCORE,
-            word_count as WORD_COUNT,
-            customer_satisfaction as CUSTOMER_SATISFACTION,
-            CASE 
-                WHEN sentiment_score < (sentiment_q1 - 1.5 * (sentiment_q3 - sentiment_q1)) THEN 'Extremely Low Sentiment'
-                WHEN sentiment_score > (sentiment_q3 + 1.5 * (sentiment_q3 - sentiment_q1)) THEN 'Extremely High Sentiment'
-                WHEN ABS(sentiment_score - avg_sentiment) > 2 * stddev_sentiment THEN 'Sentiment Outlier'
-                ELSE 'Normal'
-            END as ANOMALY_TYPE
-        FROM call_stats
-        WHERE ANOMALY_TYPE != 'Normal'
-        ORDER BY ABS(sentiment_score - avg_sentiment) DESC
-        LIMIT 20
-        """
-        
-        anomalies_df = session.sql(anomaly_query).to_pandas()
-        
+
+        # Load cached anomaly detection data
+        anomalies_df = load_anomaly_detection()
+
         if not anomalies_df.empty:
             st.write("**🚨 Detected Anomalies:**")
             st.dataframe(
@@ -1038,7 +1111,7 @@ def show_deep_analytics():
                 }),
                 use_container_width=True
             )
-            
+
             # Anomaly distribution
             fig = px.histogram(
                 anomalies_df,
@@ -1048,36 +1121,12 @@ def show_deep_analytics():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No significant anomalies detected in the current dataset.")
-    
+
     with tab3:
         st.subheader("AI-Generated Recommendations")
-        
-        # Generate recommendations using Cortex
-        recommendations_query = """
-        WITH summary_metrics AS (
-            SELECT 
-                COUNT(*) as total_calls,
-                ROUND(AVG(sentiment_score), 3) as avg_sentiment,
-                ROUND(SUM(CASE WHEN issue_resolved = 'yes' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as resolution_rate,
-                ROUND(SUM(CASE WHEN customer_satisfaction = 'satisfied' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as satisfaction_rate,
-                MODE(primary_intent) as TOP_INTENT
-            FROM call_center_analytics_db.analytics.comprehensive_call_analysis
-            WHERE agent_name != 'Not Available'
-        )
-        SELECT 
-            SNOWFLAKE.CORTEX.COMPLETE(
-                'mixtral-8x7b',
-                'Based on these call center metrics, provide 5 actionable recommendations in bullet points:
-                - Total Calls: ' || total_calls || '
-                - Average Sentiment: ' || avg_sentiment || '
-                - Resolution Rate: ' || resolution_rate || '%
-                - Satisfaction Rate: ' || satisfaction_rate || '%
-                - Top Intent: ' || TOP_INTENT
-            ) as recommendations
-        FROM summary_metrics
-        """
-        
-        rec_result = session.sql(recommendations_query).to_pandas()
+
+        # Load cached recommendations
+        rec_result = load_recommendations()
         if not rec_result.empty:
             row = rec_result.iloc[0]
             recommendations = safe_get_column(row, 'recommendations', 'No recommendations available')
@@ -1085,10 +1134,10 @@ def show_deep_analytics():
 
 def show_audio_explorer():
     st.header("🎵 Audio Explorer")
-    
+
     # Get available calls
-    calls_query = """
-    SELECT 
+    calls_query = f"""
+    SELECT
         call_id as CALL_ID,
         agent_name as AGENT_NAME,
         customer_name as CUSTOMER_NAME,
@@ -1098,39 +1147,39 @@ def show_audio_explorer():
         ROUND(sentiment_score, 3) as SENTIMENT_SCORE,
         ROUND(agent_performance_score, 1) as AGENT_PERFORMANCE_SCORE,
         LEFT(transcript_text, 200) || '...' as PREVIEW
-    FROM call_center_analytics_db.analytics.comprehensive_call_analysis
+    FROM {current_db}.{current_schema}.comprehensive_call_analysis
     WHERE transcript_text IS NOT NULL
     ORDER BY analysis_timestamp DESC
     LIMIT 20
     """
-    
+
     calls_df = session.sql(calls_query).to_pandas()
-    
+
     if not calls_df.empty:
         # Call selector
         st.subheader("📞 Select a Call to Analyze")
-        
+
         # Filters
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             intent_filter = st.selectbox(
                 "Filter by Intent",
                 ["All"] + sorted(calls_df['PRIMARY_INTENT'].dropna().unique().tolist())
             )
-        
+
         with col2:
             sentiment_filter = st.selectbox(
                 "Filter by Sentiment",
                 ["All"] + sorted(calls_df['SENTIMENT_CATEGORY'].dropna().unique().tolist())
             )
-        
+
         with col3:
             agent_filter = st.selectbox(
                 "Filter by Agent",
                 ["All"] + sorted(calls_df['AGENT_NAME'].dropna().unique().tolist())
             )
-        
+
         # Apply filters
         filtered_df = calls_df.copy()
         if intent_filter != "All":
@@ -1139,7 +1188,7 @@ def show_audio_explorer():
             filtered_df = filtered_df[filtered_df['SENTIMENT_CATEGORY'] == sentiment_filter]
         if agent_filter != "All":
             filtered_df = filtered_df[filtered_df['AGENT_NAME'] == agent_filter]
-        
+
         # Display filtered calls
         if not filtered_df.empty:
             selected_call = st.selectbox(
@@ -1147,12 +1196,12 @@ def show_audio_explorer():
                 filtered_df['CALL_ID'].tolist(),
                 format_func=lambda x: f"{x} - {filtered_df[filtered_df['CALL_ID']==x]['AGENT_NAME'].iloc[0]} ({filtered_df[filtered_df['CALL_ID']==x]['PRIMARY_INTENT'].iloc[0]})"
             )
-            
+
             # Call details
             call_data = filtered_df[filtered_df['CALL_ID'] == selected_call].iloc[0]
-            
+
             col1, col2 = st.columns([1, 2])
-            
+
             with col1:
                 st.subheader("📋 Call Details")
                 st.write(f"**Call ID:** {safe_get_column(call_data, 'CALL_ID', 'N/A')}")
@@ -1161,28 +1210,28 @@ def show_audio_explorer():
                 st.write(f"**Intent:** {safe_get_column(call_data, 'PRIMARY_INTENT', 'N/A')}")
                 st.write(f"**Sentiment:** {safe_get_column(call_data, 'SENTIMENT_CATEGORY', 'N/A')}")
                 st.write(f"**Satisfaction:** {safe_get_column(call_data, 'CUSTOMER_SATISFACTION', 'N/A')}")
-                
+
                 # Metrics
                 st.metric("Sentiment Score", safe_get_column(call_data, 'SENTIMENT_SCORE', 0))
                 st.metric("Agent Performance", f"{safe_get_column(call_data, 'AGENT_PERFORMANCE_SCORE', 0)}/10")
-            
+
             with col2:
                 st.subheader("📝 Full Transcript")
-                
+
                 # Get full transcript
                 full_transcript_query = f"""
                 SELECT transcript_text, call_summary, improvement_opportunities
-                FROM call_center_analytics_db.analytics.comprehensive_call_analysis
+                FROM {current_db}.{current_schema}.comprehensive_call_analysis
                 WHERE call_id = '{selected_call}'
                 """
-                
+
                 transcript_data = session.sql(full_transcript_query).to_pandas()
                 if not transcript_data.empty:
                     transcript_row = transcript_data.iloc[0]
-                    
+
                     # Transcript tabs
                     tab1, tab2, tab3 = st.tabs(["📄 Transcript", "📝 Summary", "💡 Improvements"])
-                    
+
                     with tab1:
                         st.text_area(
                             "Full Conversation:",
@@ -1190,10 +1239,10 @@ def show_audio_explorer():
                             height=400,
                             disabled=True
                         )
-                    
+
                     with tab2:
                         st.write(safe_get_column(transcript_row, 'call_summary', 'No summary available'))
-                    
+
                     with tab3:
                         st.write(safe_get_column(transcript_row, 'improvement_opportunities', 'No improvement opportunities available'))
                 else:
@@ -1204,4 +1253,4 @@ def show_audio_explorer():
         st.info("📊 **No call data available** - Please load your call center data to begin analysis.")
 
 if __name__ == "__main__":
-    main() 
+    main()
