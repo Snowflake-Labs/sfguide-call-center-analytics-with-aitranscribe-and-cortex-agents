@@ -11,9 +11,9 @@ CREATE OR REPLACE ROLE call_center_analytics_role
 
 -- Create warehouse for call center analytics
 CREATE OR REPLACE WAREHOUSE call_center_analytics_wh
-    WAREHOUSE_SIZE = 'medium'
+    WAREHOUSE_SIZE = 'large'
     WAREHOUSE_TYPE = 'standard'
-    AUTO_SUSPEND = 60
+    AUTO_SUSPEND = 300
     AUTO_RESUME = TRUE
     INITIALLY_SUSPENDED = TRUE
     COMMENT = 'Warehouse for call center analytics with Cortex LLM';
@@ -57,6 +57,12 @@ GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE call_center_analytics_role;
 -- role hierarchy
 GRANT ROLE call_center_analytics_role TO ROLE sysadmin;
 
+-- Start additional setup
+ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';
+
+-- Start Streamlit setup
+GRANT CREATE STREAMLIT ON SCHEMA call_center_analytics_db.analytics TO ROLE call_center_analytics_role;
+
 -- Create stages for data and audio files
 CREATE OR REPLACE STAGE call_center_analytics_db.analytics.audio_files
     DIRECTORY = (ENABLE = TRUE)
@@ -85,11 +91,11 @@ GRANT SELECT ON FUTURE VIEWS IN SCHEMA call_center_analytics_db.analytics TO ROL
 
 
 -- Display next steps
-SELECT '1.' AS step, 
+SELECT '1.' AS step,
        'Upload mp3 files to audio_files stage' AS instruction
 UNION ALL
-SELECT '2.', 'Upload and run call_center_analytics.ipynb notebook'
+SELECT '2.', 'Upload and run ai_transcribe_analytics.ipynb notebook'
 UNION ALL
 SELECT '3.', 'Upload and run cortex_analyst_setup.ipynb notebook'
-UNION ALL  
-SELECT '4.', 'Deploy Streamlit application with Modern_Call_Center_App.py'; 
+UNION ALL
+SELECT '4.', 'Deploy Streamlit application with Modern_Call_Center_App.py';
